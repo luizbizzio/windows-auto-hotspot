@@ -6,6 +6,10 @@
 
 **Windows Auto Hotspot** automates the process of turning your PC into a Wi-Fi hotspot whenever an Ethernet cable is connected. The script runs in the background, activating the hotspot when a wired connection is detected, and disabling it when the cable is unplugged. This eliminates the need for manual management—it's all done automatically.
 
+   <div align="center">
+      <img src="./images/Powershell.png" alt="Powershell" width="900"/>
+   </div>
+
 ---
 
 ### Why Ethernet? 🌐
