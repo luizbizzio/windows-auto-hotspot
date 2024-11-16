@@ -1,4 +1,4 @@
-# Windows Auto Hotspot 🪟
+# Windows Auto Hotspot 🪟🛜
 
 **Windows Auto Hotspot** is a PowerShell script that automatically manages your PC's **Wi-Fi hotspot**. It enables the hotspot when an Ethernet cable is connected (including via USB adapters) and disables it when disconnected. Follow the steps below to configure and automate the process using **Task Scheduler**.
 
