@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 Luiz Bizzio
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 function Log-Message {
     param ($message, $color)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -48,3 +51,4 @@ while ($true) {
 
     Start-Sleep -Seconds $checkInterval
 }
+
