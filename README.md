@@ -186,4 +186,6 @@ If you found this script helpful, feel free to ⭐ star the repository or fork i
 
 ## License 📄
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
+
+Commercial use, resale, and paid services are not permitted.
