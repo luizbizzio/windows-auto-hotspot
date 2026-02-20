@@ -288,8 +288,13 @@ function Install-App {
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ($args -join " ")
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
-    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType InteractiveToken -RunLevel Highest
-
+    
+    try {
+        $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType InteractiveToken -RunLevel Highest
+    } catch {
+        $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
+    }
+    
     $settings = New-ScheduledTaskSettingsSet `
         -StartWhenAvailable `
         -AllowStartIfOnBatteries `
@@ -298,7 +303,7 @@ function Install-App {
         -MultipleInstances IgnoreNew `
         -RestartCount 10 `
         -RestartInterval (New-TimeSpan -Minutes 1)
-
+    
     $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
 
     try {
@@ -438,3 +443,4 @@ switch ($PSCmdlet.ParameterSetName) {
         break
     }
 }
+
