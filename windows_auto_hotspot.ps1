@@ -289,11 +289,7 @@ function Install-App {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument ($args -join " ")
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
     
-    try {
-        $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType InteractiveToken -RunLevel Highest
-    } catch {
-        $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
-    }
+    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
     
     $settings = New-ScheduledTaskSettingsSet `
         -StartWhenAvailable `
@@ -443,4 +439,5 @@ switch ($PSCmdlet.ParameterSetName) {
         break
     }
 }
+
 
