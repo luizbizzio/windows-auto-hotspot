@@ -21,11 +21,17 @@ param(
     [Parameter(ParameterSetName = "Toggle", Mandatory = $true)]
     [switch]$Toggle,
 
-    [Parameter(ParameterSetName = "Repair", Mandatory = $true)]
-    [switch]$Repair,
+    [Parameter(ParameterSetName = "OpenLog", Mandatory = $true)]
+    [switch]$OpenLog,
+
+    [Parameter(ParameterSetName = "Doctor", Mandatory = $true)]
+    [switch]$Doctor,
 
     [Parameter(ParameterSetName = "Update", Mandatory = $true)]
     [switch]$Update,
+
+    [Parameter(ParameterSetName = "Repair", Mandatory = $true)]
+    [switch]$Repair,
 
     [string]$TaskName = "WindowsAutoHotspot",
     [string]$InstallDir = "$env:ProgramData\WindowsAutoHotspot",
@@ -46,13 +52,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$script:AppName = "Windows Auto Hotspot"
 $script:StateDir = Join-Path $env:LOCALAPPDATA "WindowsAutoHotspot"
 $script:DisableFlagPath = Join-Path $script:StateDir "hotspot.disabled"
 $script:ConfigPath = Join-Path $script:StateDir "config.json"
 $script:InstalledScriptPath = Join-Path $InstallDir "windows-auto-hotspot.ps1"
 $script:StartMenuFolderName = "Windows Auto Hotspot"
-$script:ToggleBaseName = "Windows Auto Hotspot Toggle"
-$script:IsInteractive = $false
+$script:DesktopToggleShortcutName = "Hotspot Toggle.lnk"
 
 function Ensure-Path {
     param([string]$Path)
@@ -61,6 +67,34 @@ function Ensure-Path {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
 }
+
+function Resolve-LogPath {
+    param([string]$Candidate)
+
+    if ([string]::IsNullOrWhiteSpace($Candidate)) {
+        $Candidate = Join-Path $script:StateDir "windows-auto-hotspot.log"
+    }
+
+    try {
+        Ensure-Path (Split-Path -Parent $Candidate)
+        if (-not (Test-Path -LiteralPath $Candidate)) {
+            New-Item -ItemType File -Path $Candidate -Force | Out-Null
+        }
+        Add-Content -LiteralPath $Candidate -Value "" -Encoding UTF8 -ErrorAction Stop
+        return $Candidate
+    } catch {
+        $fallback = Join-Path $script:StateDir "windows-auto-hotspot.log"
+        try {
+            Ensure-Path (Split-Path -Parent $fallback)
+            if (-not (Test-Path -LiteralPath $fallback)) {
+                New-Item -ItemType File -Path $fallback -Force | Out-Null
+            }
+        } catch {}
+        return $fallback
+    }
+}
+
+Ensure-Path $script:StateDir
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -85,36 +119,6 @@ function Ui-Pause {
     if (-not $script:IsInteractive) { return }
     Start-Sleep -Milliseconds 800
 }
-
-function Resolve-LogPath {
-    param([string]$Candidate)
-
-    if ([string]::IsNullOrWhiteSpace($Candidate)) {
-        $Candidate = Join-Path $script:StateDir "windows-auto-hotspot.log"
-    }
-
-    try {
-        $parent = Split-Path -Parent $Candidate
-        Ensure-Path $parent
-        if (-not (Test-Path -LiteralPath $Candidate)) {
-            New-Item -ItemType File -Path $Candidate -Force | Out-Null
-        } else {
-            Add-Content -LiteralPath $Candidate -Value "" -Encoding UTF8 -ErrorAction Stop
-        }
-        return $Candidate
-    } catch {
-        $fallback = Join-Path $script:StateDir "windows-auto-hotspot.log"
-        try {
-            Ensure-Path (Split-Path -Parent $fallback)
-            if (-not (Test-Path -LiteralPath $fallback)) {
-                New-Item -ItemType File -Path $fallback -Force | Out-Null
-            }
-        } catch {}
-        return $fallback
-    }
-}
-
-Ensure-Path $script:StateDir
 
 if ([string]::IsNullOrWhiteSpace($LogPath)) {
     $LogPath = Join-Path $script:StateDir "windows-auto-hotspot.log"
@@ -150,6 +154,23 @@ function Write-Log {
     }
 }
 
+function Convert-ConfigValue {
+    param([string]$Value)
+
+    if ($null -eq $Value) { return $null }
+
+    if ($Value -match '^(?i:true|false)$') {
+        return [bool]::Parse($Value)
+    }
+
+    $i = 0
+    if ([int]::TryParse($Value, [ref]$i)) {
+        return $i
+    }
+
+    return $Value
+}
+
 function Get-DefaultConfig {
     [pscustomobject]@{
         CheckIntervalSec = 5
@@ -161,16 +182,21 @@ function Get-DefaultConfig {
         CooldownOnExceptionSec = 30
         ForceOffWhenDisabled = $true
         LogPath = (Join-Path $script:StateDir "windows-auto-hotspot.log")
+        SourceUrl = ""
     }
 }
 
 function Load-Config {
     $d = Get-DefaultConfig
-    if (-not (Test-Path -LiteralPath $script:ConfigPath)) { return $d }
+
+    if (-not (Test-Path -LiteralPath $script:ConfigPath)) {
+        return $d
+    }
 
     try {
         $raw = Get-Content -LiteralPath $script:ConfigPath -Raw -ErrorAction Stop
         if ([string]::IsNullOrWhiteSpace($raw)) { return $d }
+
         $cfg = $raw | ConvertFrom-Json -ErrorAction Stop
 
         foreach ($p in $d.PSObject.Properties.Name) {
@@ -188,30 +214,36 @@ function Load-Config {
 function Save-Config {
     param($Cfg)
     Ensure-Path $script:StateDir
-    $Cfg | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:ConfigPath -Encoding UTF8
+    $Cfg | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $script:ConfigPath -Encoding UTF8
 }
 
 function Apply-Config {
     $cfg = Load-Config
 
-    if ($PSBoundParameters.ContainsKey("CheckIntervalSec")) { $script:CheckIntervalSec = [int]$CheckIntervalSec } else { $script:CheckIntervalSec = [int]$cfg.CheckIntervalSec }
-    if ($PSBoundParameters.ContainsKey("UpStableChecks")) { $script:UpStableChecks = [int]$UpStableChecks } else { $script:UpStableChecks = [int]$cfg.UpStableChecks }
-    if ($PSBoundParameters.ContainsKey("DownStableChecks")) { $script:DownStableChecks = [int]$DownStableChecks } else { $script:DownStableChecks = [int]$cfg.DownStableChecks }
-    if ($PSBoundParameters.ContainsKey("AdapterName")) { $script:AdapterName = [string]$AdapterName } else { $script:AdapterName = [string]$cfg.AdapterName }
-    if ($PSBoundParameters.ContainsKey("CooldownOnFailMin")) { $script:CooldownOnFailMin = [int]$CooldownOnFailMin } else { $script:CooldownOnFailMin = [int]$cfg.CooldownOnFailMin }
-    if ($PSBoundParameters.ContainsKey("CooldownOffFailMin")) { $script:CooldownOffFailMin = [int]$CooldownOffFailMin } else { $script:CooldownOffFailMin = [int]$cfg.CooldownOffFailMin }
-    if ($PSBoundParameters.ContainsKey("CooldownOnExceptionSec")) { $script:CooldownOnExceptionSec = [int]$CooldownOnExceptionSec } else { $script:CooldownOnExceptionSec = [int]$cfg.CooldownOnExceptionSec }
+    if (-not $PSBoundParameters.ContainsKey("CheckIntervalSec")) { $script:CheckIntervalSec = [int]$cfg.CheckIntervalSec } else { $script:CheckIntervalSec = [int]$CheckIntervalSec }
+    if (-not $PSBoundParameters.ContainsKey("UpStableChecks")) { $script:UpStableChecks = [int]$cfg.UpStableChecks } else { $script:UpStableChecks = [int]$UpStableChecks }
+    if (-not $PSBoundParameters.ContainsKey("DownStableChecks")) { $script:DownStableChecks = [int]$cfg.DownStableChecks } else { $script:DownStableChecks = [int]$DownStableChecks }
+    if (-not $PSBoundParameters.ContainsKey("AdapterName")) { $script:AdapterName = [string]$cfg.AdapterName } else { $script:AdapterName = [string]$AdapterName }
+    if (-not $PSBoundParameters.ContainsKey("CooldownOnFailMin")) { $script:CooldownOnFailMin = [int]$cfg.CooldownOnFailMin } else { $script:CooldownOnFailMin = [int]$CooldownOnFailMin }
+    if (-not $PSBoundParameters.ContainsKey("CooldownOffFailMin")) { $script:CooldownOffFailMin = [int]$cfg.CooldownOffFailMin } else { $script:CooldownOffFailMin = [int]$CooldownOffFailMin }
+    if (-not $PSBoundParameters.ContainsKey("CooldownOnExceptionSec")) { $script:CooldownOnExceptionSec = [int]$cfg.CooldownOnExceptionSec } else { $script:CooldownOnExceptionSec = [int]$CooldownOnExceptionSec }
 
-    if ($PSBoundParameters.ContainsKey("ForceOffWhenDisabled")) {
-        $script:ForceOffWhenDisabled = $true
-    } else {
+    if (-not $PSBoundParameters.ContainsKey("ForceOffWhenDisabled")) {
         $script:ForceOffWhenDisabled = [bool]$cfg.ForceOffWhenDisabled
+    } else {
+        $script:ForceOffWhenDisabled = $true
     }
 
-    if ($PSBoundParameters.ContainsKey("LogPath")) {
-        $script:LogPath = Resolve-LogPath $LogPath
-    } else {
+    if (-not $PSBoundParameters.ContainsKey("LogPath")) {
         $script:LogPath = Resolve-LogPath ([string]$cfg.LogPath)
+    } else {
+        $script:LogPath = Resolve-LogPath $LogPath
+    }
+
+    if (-not $PSBoundParameters.ContainsKey("SourceUrl")) {
+        $script:SourceUrl = [string]$cfg.SourceUrl
+    } else {
+        $script:SourceUrl = [string]$SourceUrl
     }
 }
 
@@ -224,6 +256,7 @@ function Wait-AsyncOp {
     )
 
     $sw = [Diagnostics.Stopwatch]::StartNew()
+
     while ($true) {
         $status = $Op.Status.ToString()
         if ($status -ne "Started") { break }
@@ -259,20 +292,10 @@ function Get-EthernetState {
         $all = @(Get-NetAdapter -ErrorAction SilentlyContinue)
 
         if ($script:AdapterName) {
-            $all = @($all | Where-Object { $_ -and $_.Name -eq $script:AdapterName })
-        } else {
-            $all = @($all | Where-Object { $_ })
+            $all = @($all | Where-Object { $_.Name -eq $script:AdapterName })
         }
 
-        $adapters = @(
-            $all | Where-Object {
-                $_.Status -eq "Up" -and (
-                    $_.MediaType -eq "802.3" -or
-                    $_.NdisPhysicalMedium -eq 0 -or
-                    $_.InterfaceDescription -match "Ethernet|GbE|LAN|USB.*Ethernet"
-                )
-            }
-        )
+        $adapters = @($all | Where-Object { $_.Status -eq "Up" -and $_.MediaType -eq "802.3" })
     } catch {
         $adapters = @()
     }
@@ -285,8 +308,8 @@ function Get-EthernetState {
     }
 
     [pscustomobject]@{
-        IsUp  = (@($adapters).Count -gt 0)
-        Names = @($names)
+        IsUp  = ($adapters.Count -gt 0)
+        Names = $names
     }
 }
 
@@ -297,7 +320,7 @@ function Get-ConnectionProfileSafe {
         if ($null -ne $p) { return $p }
 
         $profiles = $ni::GetConnectionProfiles()
-        foreach ($x in $profiles) {
+        foreach ($x in @($profiles)) {
             try {
                 $lvl = $x.GetNetworkConnectivityLevel().ToString()
                 if ($lvl -ne "None") { return $x }
@@ -327,9 +350,9 @@ function Test-WifiAdapterPresent {
         $all = @(Get-NetAdapter -ErrorAction SilentlyContinue)
         $wifi = @(
             $all | Where-Object {
-                $_ -and $_.Status -ne "Disabled" -and (
+                $_.Status -ne "Disabled" -and (
                     $_.InterfaceDescription -match "Wi-?Fi|Wireless|802\.11" -or
-                    $_.Name -match "Wi-?Fi|Wireless" -or
+                    $_.Name -match "Wi-?Fi|Wireless|WLAN" -or
                     $_.NdisPhysicalMedium -eq 9
                 )
             }
@@ -342,6 +365,7 @@ function Test-WifiAdapterPresent {
 
 function Get-TetheringCapabilityText {
     param($Mgr)
+
     try {
         $cap = $Mgr.TetheringCapability
         if ($null -eq $cap) { return "Unknown" }
@@ -374,7 +398,6 @@ function Ensure-Hotspot {
 
     if ($Desired -eq "On") {
         if ($state -eq "On") { return $true }
-
         Write-Log "Turning hotspot ON..." "INFO"
         try {
             $op = $mgr.StartTetheringAsync()
@@ -387,7 +410,6 @@ function Ensure-Hotspot {
         }
     } else {
         if ($state -eq "Off") { return $true }
-
         Write-Log "Turning hotspot OFF..." "INFO"
         try {
             $op = $mgr.StopTetheringAsync()
@@ -403,6 +425,7 @@ function Ensure-Hotspot {
 
 function Acquire-SingleInstance {
     $m = $null
+
     try {
         $m = New-Object System.Threading.Mutex($false, "Global\WindowsAutoHotspot_Mutex")
     } catch {
@@ -420,10 +443,7 @@ function Stop-OldMonitorProcess {
     param([string]$ScriptPath)
 
     try {
-        $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -in @("powershell.exe","pwsh.exe")
-        })
-
+        $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue)
         foreach ($p in $procs) {
             $cmd = $p.CommandLine
             if ($cmd -and $cmd -like "*$ScriptPath*" -and $cmd -like "* -Run*") {
@@ -449,22 +469,41 @@ function Set-DisabledFlag {
         Remove-Item -LiteralPath $script:DisableFlagPath -Force -ErrorAction SilentlyContinue
         Write-Log "Automation enabled by user." "OK"
     }
+
+    Update-ToggleShortcutVisual
 }
 
-function Get-HotspotSystemIconLocation {
+function Open-LogFile {
+    try {
+        if (-not (Test-Path -LiteralPath $script:LogPath)) { return }
+        Start-Process -FilePath "notepad.exe" -ArgumentList "`"$script:LogPath`""
+    } catch {}
+}
+
+function Get-EnabledIcon {
     $candidates = @(
-        (Join-Path $env:SystemRoot "System32\pnidui.dll") + ",6",
-        (Join-Path $env:SystemRoot "System32\netshell.dll") + ",86",
-        (Join-Path $env:SystemRoot "System32\imageres.dll") + ",171",
-        (Join-Path $env:SystemRoot "System32\shell32.dll") + ",44"
+        (Join-Path $env:SystemRoot "System32\netshell.dll") + ",0",
+        (Join-Path $env:SystemRoot "System32\shell32.dll") + ",44",
+        (Join-Path $env:SystemRoot "System32\imageres.dll") + ",160"
     )
-
     foreach ($c in $candidates) {
-        $file = $c.Split(",")[0]
-        if (Test-Path -LiteralPath $file) { return $c }
+        $dll = ($c -split ",")[0]
+        if (Test-Path -LiteralPath $dll) { return $c }
     }
+    return $null
+}
 
-    return ((Join-Path $env:SystemRoot "System32\shell32.dll") + ",44")
+function Get-DisabledIcon {
+    $candidates = @(
+        (Join-Path $env:SystemRoot "System32\imageres.dll") + ",101",
+        (Join-Path $env:SystemRoot "System32\shell32.dll") + ",131",
+        (Join-Path $env:SystemRoot "System32\shell32.dll") + ",109"
+    )
+    foreach ($c in $candidates) {
+        $dll = ($c -split ",")[0]
+        if (Test-Path -LiteralPath $dll) { return $c }
+    }
+    return (Get-EnabledIcon)
 }
 
 function New-Shortcut {
@@ -473,7 +512,8 @@ function New-Shortcut {
         [string]$TargetPath,
         [string]$Arguments,
         [string]$WorkingDirectory,
-        [string]$IconLocation
+        [string]$IconLocation,
+        [string]$Description
     )
 
     try {
@@ -484,70 +524,79 @@ function New-Shortcut {
         $sc.Arguments = $Arguments
         if ($WorkingDirectory) { $sc.WorkingDirectory = $WorkingDirectory }
         if ($IconLocation) { $sc.IconLocation = $IconLocation }
+        if ($Description) { $sc.Description = $Description }
         $sc.Save()
     } catch {}
 }
 
-function Remove-ToggleShortcuts {
-    $commonStart = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"
-    $folder = Join-Path $commonStart $script:StartMenuFolderName
-    $publicDesktop = Join-Path $env:Public "Desktop"
-    $userDesktop = [Environment]::GetFolderPath("Desktop")
+function Get-DesktopToggleShortcutPath {
+    return (Join-Path (Join-Path $env:Public "Desktop") $script:DesktopToggleShortcutName)
+}
 
-    $names = @(
-        "🟢 $($script:ToggleBaseName).lnk",
-        "🔴 $($script:ToggleBaseName).lnk",
-        "$($script:ToggleBaseName).lnk"
-    )
+function Get-StartMenuFolderPath {
+    return (Join-Path (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs") $script:StartMenuFolderName)
+}
 
-    foreach ($n in $names) {
-        foreach ($root in @($folder, $publicDesktop, $userDesktop)) {
-            if ([string]::IsNullOrWhiteSpace($root)) { continue }
-            $p = Join-Path $root $n
-            try { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
-
+function Update-ToggleShortcutVisual {
     try {
-        if (Test-Path -LiteralPath $folder) {
-            $remaining = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)
-            if ($remaining.Count -eq 0) {
-                Remove-Item -LiteralPath $folder -Force -ErrorAction SilentlyContinue
-            }
+        if (-not (Test-Path -LiteralPath $script:InstalledScriptPath)) { return }
+
+        $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (-not (Test-Path -LiteralPath $ps)) { $ps = "powershell.exe" }
+
+        $baseArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$script:InstalledScriptPath`""
+        $disabled = Is-AutomationDisabled
+
+        $icon = if ($disabled) { Get-DisabledIcon } else { Get-EnabledIcon }
+        $desc = if ($disabled) { "Automation disabled. Click to toggle." } else { "Automation enabled. Click to toggle." }
+
+        $desktopLink = Get-DesktopToggleShortcutPath
+        New-Shortcut $desktopLink $ps "$baseArgs -Toggle" $env:WINDIR $icon $desc
+
+        $startFolder = Get-StartMenuFolderPath
+        $toggleLink = Join-Path $startFolder "Toggle Hotspot Automation.lnk"
+        if (Test-Path -LiteralPath $startFolder) {
+            New-Shortcut $toggleLink $ps "$baseArgs -Toggle" $env:WINDIR $icon $desc
         }
     } catch {}
 }
 
-function Get-ToggleShortcutFileName {
-    if (Is-AutomationDisabled) {
-        return "🔴 $($script:ToggleBaseName).lnk"
-    }
-    return "🟢 $($script:ToggleBaseName).lnk"
-}
-
-function Refresh-ToggleShortcuts {
+function Create-Shortcuts {
     param([string]$InstalledScriptPath)
-
-    if ([string]::IsNullOrWhiteSpace($InstalledScriptPath)) { return }
-    if (-not (Test-Path -LiteralPath $InstalledScriptPath)) { return }
-
-    Remove-ToggleShortcuts
 
     $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     if (-not (Test-Path -LiteralPath $ps)) { $ps = "powershell.exe" }
 
-    $icon = Get-HotspotSystemIconLocation
-
-    $commonStart = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs"
-    $folder = Join-Path $commonStart $script:StartMenuFolderName
-    Ensure-Path $folder
+    $startFolder = Get-StartMenuFolderPath
+    Ensure-Path $startFolder
 
     $publicDesktop = Join-Path $env:Public "Desktop"
-    $name = Get-ToggleShortcutFileName
-    $baseArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScriptPath`" -Toggle"
+    $baseArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScriptPath`""
 
-    New-Shortcut (Join-Path $folder $name) $ps $baseArgs $env:WINDIR $icon
-    New-Shortcut (Join-Path $publicDesktop $name) $ps $baseArgs $env:WINDIR $icon
+    $enabledIcon = Get-EnabledIcon
+    $disabledIcon = Get-DisabledIcon
+
+    New-Shortcut (Join-Path $startFolder "Toggle Hotspot Automation.lnk")   $ps "$baseArgs -Toggle"   $env:WINDIR $enabledIcon  "Toggle automation"
+    New-Shortcut (Join-Path $startFolder "Enable Hotspot Automation.lnk")   $ps "$baseArgs -Enable"   $env:WINDIR $enabledIcon  "Enable automation"
+    New-Shortcut (Join-Path $startFolder "Disable Hotspot Automation.lnk")  $ps "$baseArgs -Disable"  $env:WINDIR $disabledIcon "Disable automation"
+    New-Shortcut (Join-Path $startFolder "Status.lnk")                      $ps "$baseArgs -Status"   $env:WINDIR $enabledIcon  "Show status"
+    New-Shortcut (Join-Path $startFolder "Repair.lnk")                      $ps "$baseArgs -Repair"   $env:WINDIR $enabledIcon  "Repair task and shortcuts"
+    New-Shortcut (Join-Path $startFolder "Update.lnk")                      $ps "$baseArgs -Update"   $env:WINDIR $enabledIcon  "Update installed script"
+    New-Shortcut (Join-Path $startFolder "Doctor.lnk")                      $ps "$baseArgs -Doctor"   $env:WINDIR $enabledIcon  "Diagnostics"
+    New-Shortcut (Join-Path $startFolder "Open Log.lnk")                    $ps "$baseArgs -OpenLog"  $env:WINDIR $enabledIcon  "Open log"
+    New-Shortcut (Join-Path $startFolder "Uninstall.lnk")                   $ps "$baseArgs -Uninstall" $env:WINDIR $disabledIcon "Uninstall"
+
+    New-Shortcut (Join-Path $publicDesktop $script:DesktopToggleShortcutName) $ps "$baseArgs -Toggle" $env:WINDIR $enabledIcon "Toggle automation"
+
+    Update-ToggleShortcutVisual
+}
+
+function Remove-Shortcuts {
+    $startFolder = Get-StartMenuFolderPath
+    $desktopLink = Get-DesktopToggleShortcutPath
+
+    try { Remove-Item -LiteralPath $desktopLink -Force -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Item -LiteralPath $startFolder -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 function Build-TaskArgs {
@@ -578,15 +627,6 @@ function Build-TaskArgs {
     }
 
     return $args
-}
-
-function Get-TaskStateSafe {
-    try {
-        $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        return [string]$t.State
-    } catch {
-        return "NotFound"
-    }
 }
 
 function Register-OrRepairTask {
@@ -626,9 +666,9 @@ function Register-OrRepairTask {
 
     try {
         Start-ScheduledTask -TaskName $TaskName
-        $deadline = (Get-Date).AddSeconds(6)
+        $deadline = (Get-Date).AddSeconds(5)
         do {
-            $st = Get-TaskStateSafe
+            $st = (Get-ScheduledTask -TaskName $TaskName).State
             if ($st -eq "Running") {
                 $started = $true
                 break
@@ -639,18 +679,23 @@ function Register-OrRepairTask {
 
     if (-not $started) {
         $p = Build-TaskArgs $InstalledScriptPath
-        try {
-            Start-Process -FilePath "powershell.exe" -ArgumentList ($p -join " ") -WindowStyle Hidden
-        } catch {}
-        Start-Sleep -Milliseconds 500
-        $st = Get-TaskStateSafe
+        Start-Process -FilePath "powershell.exe" -ArgumentList ($p -join " ") -WindowStyle Hidden
+        try { $st = (Get-ScheduledTask -TaskName $TaskName).State } catch {}
     }
 
     return $st
 }
 
+function Clean-InstallArtifacts {
+    try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+    Start-Sleep -Milliseconds 300
+    try { Stop-OldMonitorProcess $script:InstalledScriptPath } catch {}
+    try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
+    try { Remove-Shortcuts } catch {}
+}
+
 function Save-CurrentConfig {
-    $cfg = Get-DefaultConfig
+    $cfg = Load-Config
     $cfg.CheckIntervalSec = [int]$script:CheckIntervalSec
     $cfg.UpStableChecks = [int]$script:UpStableChecks
     $cfg.DownStableChecks = [int]$script:DownStableChecks
@@ -660,16 +705,12 @@ function Save-CurrentConfig {
     $cfg.CooldownOnExceptionSec = [int]$script:CooldownOnExceptionSec
     $cfg.ForceOffWhenDisabled = [bool]$script:ForceOffWhenDisabled
     $cfg.LogPath = [string]$script:LogPath
+    if (-not [string]::IsNullOrWhiteSpace($SourceUrl)) {
+        $cfg.SourceUrl = [string]$SourceUrl
+    } elseif (-not [string]::IsNullOrWhiteSpace($script:SourceUrl)) {
+        $cfg.SourceUrl = [string]$script:SourceUrl
+    }
     Save-Config $cfg
-}
-
-function Clean-InstallArtifactsOnly {
-    try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
-    Start-Sleep -Milliseconds 300
-    try { Stop-OldMonitorProcess $script:InstalledScriptPath } catch {}
-    try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
-    try { Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
-    Remove-ToggleShortcuts
 }
 
 function Install-App {
@@ -678,23 +719,29 @@ function Install-App {
         exit 1
     }
 
-    Write-Host "Installing (clean reinstall mode)..." -ForegroundColor Cyan
-
-    Clean-InstallArtifactsOnly
-
     Ensure-Path $InstallDir
     Ensure-Path $script:StateDir
+    $script:LogPath = Resolve-LogPath $script:LogPath
 
     Save-CurrentConfig
 
+    Clean-InstallArtifacts
+
     $srcPath = $PSCommandPath
+
     if ([string]::IsNullOrWhiteSpace($srcPath) -or -not (Test-Path -LiteralPath $srcPath)) {
-        if ([string]::IsNullOrWhiteSpace($SourceUrl)) {
+        $effectiveSource = $SourceUrl
+        if ([string]::IsNullOrWhiteSpace($effectiveSource)) {
+            $effectiveSource = $script:SourceUrl
+        }
+
+        if ([string]::IsNullOrWhiteSpace($effectiveSource)) {
             Write-Host "This script has no file path. Use -SourceUrl to install from URL." -ForegroundColor Red
             exit 1
         }
+
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri $SourceUrl -OutFile $script:InstalledScriptPath
+            Invoke-WebRequest -UseBasicParsing -Uri $effectiveSource -OutFile $script:InstalledScriptPath
         } catch {
             Write-Host ("Download failed: " + $_.Exception.Message) -ForegroundColor Red
             exit 1
@@ -704,12 +751,14 @@ function Install-App {
     }
 
     $st = Register-OrRepairTask $script:InstalledScriptPath
-    Refresh-ToggleShortcuts $script:InstalledScriptPath
+    Create-Shortcuts $script:InstalledScriptPath
+    Update-ToggleShortcutVisual
 
     Write-Host "Task state: $st" -ForegroundColor Cyan
     Write-Host "Installed. Task created: $TaskName" -ForegroundColor Green
     Write-Host "Logs: $script:LogPath" -ForegroundColor Cyan
-    Write-Host "Desktop + Start Menu toggle shortcut refreshed." -ForegroundColor Gray
+    Write-Host "Start Menu: $($script:StartMenuFolderName)" -ForegroundColor Gray
+    Write-Host "Desktop shortcut: $($script:DesktopToggleShortcutName)" -ForegroundColor Gray
 }
 
 function Uninstall-App {
@@ -723,54 +772,28 @@ function Uninstall-App {
     try { Stop-OldMonitorProcess $script:InstalledScriptPath } catch {}
     try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
 
+    Remove-Shortcuts
+
     try { Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
     try { Remove-Item -LiteralPath $script:StateDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 
-    Remove-ToggleShortcuts
-
-    Write-Host "Uninstalled. Task, files and shortcuts removed." -ForegroundColor Yellow
-}
-
-function Start-TaskIfPresent {
-    try {
-        $null = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        try { Start-ScheduledTask -TaskName $TaskName } catch {}
-    } catch {}
-}
-
-function Disable-Automation {
-    Set-DisabledFlag $true
-    Refresh-ToggleShortcuts $script:InstalledScriptPath
-    if ($script:ForceOffWhenDisabled) { $null = Ensure-Hotspot "Off" }
-    Write-Host "Automation disabled." -ForegroundColor Yellow
-}
-
-function Enable-Automation {
-    Set-DisabledFlag $false
-    Refresh-ToggleShortcuts $script:InstalledScriptPath
-    Start-TaskIfPresent
-    Write-Host "Automation enabled." -ForegroundColor Green
-}
-
-function Toggle-Automation {
-    if (Is-AutomationDisabled) {
-        Enable-Automation
-    } else {
-        Disable-Automation
-    }
+    Write-Host "Uninstalled. Task removed and files deleted." -ForegroundColor Yellow
 }
 
 function Show-Status {
     $eth = Get-EthernetState
+    $disabled = Is-AutomationDisabled
+
+    Write-Host ("Automation disabled: " + $disabled) -ForegroundColor Yellow
+    Write-Host ("Config: " + $script:ConfigPath) -ForegroundColor Gray
+
     Write-Host ("Ethernet Up: " + $eth.IsUp) -ForegroundColor Cyan
     if (@($eth.Names).Count -gt 0) {
         Write-Host ("Adapters: " + (@($eth.Names) -join ", ")) -ForegroundColor Cyan
     }
 
-    Write-Host ("Automation disabled: " + (Is-AutomationDisabled)) -ForegroundColor Yellow
-
     $wifiPresent = Test-WifiAdapterPresent
-    Write-Host ("Wi-Fi adapter present: " + $wifiPresent) -ForegroundColor Gray
+    Write-Host ("Wi-Fi present: " + $wifiPresent) -ForegroundColor Cyan
 
     $mgr = Get-TetheringManagerSafe
     if ($null -eq $mgr) {
@@ -782,79 +805,15 @@ function Show-Status {
         Write-Host ("Hotspot: " + $hst + " | Capability: " + $cap) -ForegroundColor Green
     }
 
-    Write-Host ("Scheduled task: " + (Get-TaskStateSafe)) -ForegroundColor Gray
+    try {
+        $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        Write-Host ("Scheduled task: Present (" + $t.State + ")") -ForegroundColor Green
+    } catch {
+        Write-Host "Scheduled task: Not found" -ForegroundColor Red
+    }
+
     Write-Host ("Installed script: " + $script:InstalledScriptPath) -ForegroundColor Gray
-    Write-Host ("Config: " + $script:ConfigPath) -ForegroundColor Gray
-    Write-Host ("Log: " + $script:LogPath) -ForegroundColor Gray
-}
-
-function Do-Repair {
-    if (-not (Test-Admin)) {
-        Write-Host "Run as Administrator to repair." -ForegroundColor Red
-        exit 1
-    }
-
-    if (-not (Test-Path -LiteralPath $script:InstalledScriptPath)) {
-        Write-Host "Installed script not found. Run -Install first." -ForegroundColor Red
-        exit 1
-    }
-
-    Apply-Config
-    Save-CurrentConfig
-
-    $st = Register-OrRepairTask $script:InstalledScriptPath
-    Refresh-ToggleShortcuts $script:InstalledScriptPath
-
-    Write-Host "Task state: $st" -ForegroundColor Cyan
-    Write-Host "Repair done." -ForegroundColor Green
-}
-
-function Do-Update {
-    if (-not (Test-Admin)) {
-        Write-Host "Run as Administrator to update." -ForegroundColor Red
-        exit 1
-    }
-
-    if ([string]::IsNullOrWhiteSpace($SourceUrl)) {
-        Write-Host "Use -SourceUrl to update from URL." -ForegroundColor Red
-        exit 1
-    }
-
-    Ensure-Path $InstallDir
-
-    $tmp = Join-Path $env:TEMP ("windows-auto-hotspot.update." + [DateTime]::UtcNow.Ticks + ".ps1")
-    try {
-        Invoke-WebRequest -UseBasicParsing -Uri $SourceUrl -OutFile $tmp
-    } catch {
-        Write-Host ("Download failed: " + $_.Exception.Message) -ForegroundColor Red
-        exit 1
-    }
-
-    $ok = $false
-    try {
-        $content = Get-Content -LiteralPath $tmp -Raw -ErrorAction Stop
-        if ($content -match "WindowsAutoHotspot" -and $content -match "Run-Monitor") { $ok = $true }
-    } catch {
-        $ok = $false
-    }
-
-    if (-not $ok) {
-        Write-Host "Downloaded file does not look valid. Aborting." -ForegroundColor Red
-        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch {}
-        exit 1
-    }
-
-    try {
-        Copy-Item -LiteralPath $tmp -Destination $script:InstalledScriptPath -Force
-    } catch {
-        Write-Host ("Update copy failed: " + $_.Exception.Message) -ForegroundColor Red
-        exit 1
-    } finally {
-        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch {}
-    }
-
-    Write-Host "Installed script updated." -ForegroundColor Green
-    Do-Repair
+    Write-Host ("Log file: " + $script:LogPath) -ForegroundColor Gray
 }
 
 function Run-Monitor {
@@ -912,9 +871,9 @@ function Run-Monitor {
 
                     if ($upCount -ge $script:UpStableChecks) {
                         if ($lastWanted -ne "On") {
-                            $names = ""
-                            if (@($eth.Names).Count -gt 0) { $names = (@($eth.Names) -join ", ") }
-                            Write-Log "Ethernet stable ON. $names" "OK"
+                            $namesText = ""
+                            if (@($eth.Names).Count -gt 0) { $namesText = (@($eth.Names) -join ", ") }
+                            Write-Log "Ethernet stable ON. $namesText" "OK"
                             $lastWanted = "On"
                         }
 
@@ -952,38 +911,196 @@ function Run-Monitor {
     }
 }
 
-try {
-    switch ($PSCmdlet.ParameterSetName) {
-        "Install"   { Install-App; break }
-        "Uninstall" { Uninstall-App; break }
-        "Run"       { Run-Monitor; break }
-        "Status"    { Show-Status; break }
-        "Disable"   { Disable-Automation; break }
-        "Enable"    { Enable-Automation; break }
-        "Toggle"    { Toggle-Automation; break }
-        "Repair"    { Do-Repair; break }
-        "Update"    { Do-Update; break }
-        default {
-            Write-Host "Usage:" -ForegroundColor Cyan
-            Write-Host "  -Install    (needs Admin, clean reinstall)" -ForegroundColor Gray
-            Write-Host "  -Uninstall  (needs Admin)" -ForegroundColor Gray
-            Write-Host "  -Status" -ForegroundColor Gray
-            Write-Host "  -Enable" -ForegroundColor Gray
-            Write-Host "  -Disable" -ForegroundColor Gray
-            Write-Host "  -Toggle" -ForegroundColor Gray
-            Write-Host "  -Repair     (needs Admin)" -ForegroundColor Gray
-            Write-Host "  -Update -SourceUrl <url> (needs Admin)" -ForegroundColor Gray
-            Write-Host "" -ForegroundColor Gray
-            Write-Host "Examples:" -ForegroundColor Cyan
-            Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Install" -ForegroundColor Gray
-            Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Toggle" -ForegroundColor Gray
-            Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Repair" -ForegroundColor Gray
-            break
-        }
-    }
-} catch {
-    $msg = $_.Exception.Message
-    try { Write-Log ("Fatal error: " + $msg) "ERROR" } catch {}
-    Write-Host ("Error: " + $msg) -ForegroundColor Red
-    exit 1
+function Disable-Automation {
+    Set-DisabledFlag $true
+    if ($script:ForceOffWhenDisabled) { $null = Ensure-Hotspot "Off" }
+    Write-Host "Automation disabled." -ForegroundColor Yellow
 }
+
+function Enable-Automation {
+    Set-DisabledFlag $false
+    Write-Host "Automation enabled." -ForegroundColor Green
+}
+
+function Toggle-Automation {
+    if (Is-AutomationDisabled) {
+        Set-DisabledFlag $false
+        Write-Host "Automation enabled." -ForegroundColor Green
+    } else {
+        Set-DisabledFlag $true
+        if ($script:ForceOffWhenDisabled) { $null = Ensure-Hotspot "Off" }
+        Write-Host "Automation disabled." -ForegroundColor Yellow
+    }
+}
+
+function Show-Doctor {
+    $wifi = Test-WifiAdapterPresent
+    $mgr = Get-TetheringManagerSafe
+    $cap = "Unknown"
+    $hst = "Unknown"
+
+    if ($null -ne $mgr) {
+        $cap = Get-TetheringCapabilityText $mgr
+        try { $hst = $mgr.TetheringOperationalState.ToString() } catch {}
+    }
+
+    Write-Host "Doctor Report" -ForegroundColor Cyan
+    Write-Host ("Admin: " + (Test-Admin)) -ForegroundColor Gray
+    Write-Host ("Wi-Fi present: " + $wifi) -ForegroundColor Gray
+    Write-Host ("Hotspot capability: " + $cap) -ForegroundColor Gray
+    Write-Host ("Hotspot state: " + $hst) -ForegroundColor Gray
+    Write-Host ("Automation disabled: " + (Is-AutomationDisabled)) -ForegroundColor Gray
+    Write-Host ("TaskName: " + $TaskName) -ForegroundColor Gray
+    Write-Host ("InstallDir: " + $InstallDir) -ForegroundColor Gray
+    Write-Host ("InstalledScript: " + $script:InstalledScriptPath) -ForegroundColor Gray
+    Write-Host ("StateDir: " + $script:StateDir) -ForegroundColor Gray
+    Write-Host ("ConfigPath: " + $script:ConfigPath) -ForegroundColor Gray
+    Write-Host ("LogPath: " + $script:LogPath) -ForegroundColor Gray
+
+    try {
+        $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        Write-Host ("Task: Present (" + $t.State + ")") -ForegroundColor Gray
+    } catch {
+        Write-Host "Task: Not found" -ForegroundColor Gray
+    }
+}
+
+function Do-Repair {
+    if (-not (Test-Admin)) {
+        Write-Host "Run as Administrator to repair." -ForegroundColor Red
+        exit 1
+    }
+
+    if (-not (Test-Path -LiteralPath $script:InstalledScriptPath)) {
+        Write-Host "Installed script not found. Install first." -ForegroundColor Red
+        exit 1
+    }
+
+    $cfg = Load-Config
+    $script:CheckIntervalSec = [int]$cfg.CheckIntervalSec
+    $script:UpStableChecks = [int]$cfg.UpStableChecks
+    $script:DownStableChecks = [int]$cfg.DownStableChecks
+    $script:AdapterName = [string]$cfg.AdapterName
+    $script:CooldownOnFailMin = [int]$cfg.CooldownOnFailMin
+    $script:CooldownOffFailMin = [int]$cfg.CooldownOffFailMin
+    $script:CooldownOnExceptionSec = [int]$cfg.CooldownOnExceptionSec
+    $script:ForceOffWhenDisabled = [bool]$cfg.ForceOffWhenDisabled
+    $script:LogPath = Resolve-LogPath ([string]$cfg.LogPath)
+    $script:SourceUrl = [string]$cfg.SourceUrl
+
+    $st = Register-OrRepairTask $script:InstalledScriptPath
+    Create-Shortcuts $script:InstalledScriptPath
+    Update-ToggleShortcutVisual
+
+    Write-Host "Task state: $st" -ForegroundColor Cyan
+    Write-Host "Repair done." -ForegroundColor Green
+}
+
+function Do-Update {
+    if (-not (Test-Admin)) {
+        Write-Host "Run as Administrator to update." -ForegroundColor Red
+        exit 1
+    }
+
+    $effectiveSource = $SourceUrl
+    if ([string]::IsNullOrWhiteSpace($effectiveSource)) {
+        $cfg = Load-Config
+        $effectiveSource = [string]$cfg.SourceUrl
+    }
+
+    if ([string]::IsNullOrWhiteSpace($effectiveSource)) {
+        Write-Host "Use -SourceUrl to update from URL (or install once with -SourceUrl)." -ForegroundColor Red
+        exit 1
+    }
+
+    Ensure-Path $InstallDir
+
+    $tmp = Join-Path $env:TEMP ("windows-auto-hotspot.update." + [DateTime]::UtcNow.Ticks + ".ps1")
+
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $effectiveSource -OutFile $tmp
+    } catch {
+        Write-Host ("Download failed: " + $_.Exception.Message) -ForegroundColor Red
+        exit 1
+    }
+
+    $ok = $false
+    try {
+        $content = Get-Content -LiteralPath $tmp -Raw -ErrorAction Stop
+        if ($content -match "WindowsAutoHotspot" -and $content -match "Run-Monitor" -and $content -match "Get-EthernetState") {
+            $ok = $true
+        }
+    } catch {
+        $ok = $false
+    }
+
+    if (-not $ok) {
+        Write-Host "Downloaded file does not look valid. Aborting." -ForegroundColor Red
+        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch {}
+        exit 1
+    }
+
+    try {
+        Copy-Item -LiteralPath $tmp -Destination $script:InstalledScriptPath -Force
+    } catch {
+        Write-Host ("Update copy failed: " + $_.Exception.Message) -ForegroundColor Red
+        exit 1
+    } finally {
+        try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch {}
+    }
+
+    $cfg = Load-Config
+    $cfg.SourceUrl = $effectiveSource
+    Save-Config $cfg
+
+    Write-Host "Updated installed script." -ForegroundColor Green
+    Do-Repair
+}
+
+function Invoke-MainSafe {
+    try {
+        switch ($PSCmdlet.ParameterSetName) {
+            "Install"   { Install-App; break }
+            "Uninstall" { Uninstall-App; break }
+            "Status"    { Show-Status; break }
+            "Run"       { Run-Monitor; break }
+            "Disable"   { Disable-Automation; break }
+            "Enable"    { Enable-Automation; break }
+            "Toggle"    { Toggle-Automation; break }
+            "OpenLog"   { Open-LogFile; break }
+            "Doctor"    { Show-Doctor; break }
+            "Repair"    { Do-Repair; break }
+            "Update"    { Do-Update; break }
+            default {
+                Write-Host "Usage:" -ForegroundColor Cyan
+                Write-Host "  -Install    (needs Admin, clean reinstall)" -ForegroundColor Gray
+                Write-Host "  -Uninstall  (needs Admin)" -ForegroundColor Gray
+                Write-Host "  -Status" -ForegroundColor Gray
+                Write-Host "  -Enable" -ForegroundColor Gray
+                Write-Host "  -Disable" -ForegroundColor Gray
+                Write-Host "  -Toggle" -ForegroundColor Gray
+                Write-Host "  -Repair     (needs Admin)" -ForegroundColor Gray
+                Write-Host "  -Update     -SourceUrl <url> (needs Admin)" -ForegroundColor Gray
+                Write-Host "  -Doctor" -ForegroundColor Gray
+                Write-Host "  -OpenLog" -ForegroundColor Gray
+                Write-Host "" -ForegroundColor Gray
+                Write-Host "Examples:" -ForegroundColor Cyan
+                Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Install" -ForegroundColor Gray
+                Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Install -SourceUrl https://raw.githubusercontent.com/luizbizzio/windows-auto-hotspot/main/windows_auto_hotspot.ps1" -ForegroundColor Gray
+                Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Toggle" -ForegroundColor Gray
+                Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Repair" -ForegroundColor Gray
+                Write-Host "  powershell -ExecutionPolicy Bypass -File .\windows_auto_hotspot.ps1 -Update -SourceUrl https://raw.githubusercontent.com/luizbizzio/windows-auto-hotspot/main/windows_auto_hotspot.ps1" -ForegroundColor Gray
+                break
+            }
+        }
+    } catch {
+        $msg = $_.Exception.Message
+        try { Write-Log ("Fatal error: " + $msg) "ERROR" } catch {}
+        if (-not $Quiet) {
+            Write-Host ("Fatal error: " + $msg) -ForegroundColor Red
+        }
+        exit 1
+    }
+}
+
+Invoke-MainSafe
