@@ -91,4 +91,4 @@ It removes the scheduled task, shortcuts, installed files, and app state.
 
 ## License
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
+This project is licensed under the [Apache 2.0 License](./LICENSE).
