@@ -13,7 +13,7 @@ It is made for normal users, with simple shortcuts in the **Start Menu**. No Tas
 - People who want to share internet to phone, tablet, VR headset, or another device
 - People who want it to work automatically after installing
 
-## Install (One-Line)
+## Install (One-Line) 🚀
 
 Open **PowerShell as Administrator** and run:
 
@@ -23,7 +23,7 @@ $u='https://raw.githubusercontent.com/luizbizzio/windows-auto-hotspot/main/windo
 
 When Windows asks for permission, click **Yes**.
 
-## What you get after installing
+## What you get after installing ✅
 
 After installation, you will find a **Windows Auto Hotspot** folder in the **Start Menu** with shortcuts like:
 
@@ -52,7 +52,7 @@ Configure your hotspot once in Windows:
 
 After this, the app can manage it automatically.
 
-## How to use (easy mode)
+## How to use (easy mode) 📘
 
 After installing, open the **Start Menu** and use the shortcuts:
 
@@ -63,14 +63,14 @@ After installing, open the **Start Menu** and use the shortcuts:
 - **WAH - Open Log**: opens the log file
 - **WAH - Uninstall**: removes everything
 
-## How it works (simple)
+## How it works (simple) ⚙️
 
 - Ethernet connected → hotspot turns **ON**
 - Ethernet disconnected → hotspot turns **OFF**
 - It keeps monitoring in the background
 - It starts automatically when you log in
 
-## Requirements
+## Requirements ⚠️
 
 - **Windows 10 or Windows 11**
 - **Administrator permission** (for install/uninstall)
@@ -83,12 +83,12 @@ After installing, open the **Start Menu** and use the shortcuts:
 - Great for **laptops**, including setups where the laptop stays plugged in
 - You can use **WAH - Status** anytime to check if everything is working
 
-## Uninstall
+## Uninstall ❌
 
 Use **WAH - Uninstall** from the Start Menu.
 
 It removes the scheduled task, shortcuts, installed files, and app state.
 
-## License
+## License 📄
 
 This project is licensed under the [Apache 2.0 License](./LICENSE).
