@@ -1,4 +1,4 @@
-# Windows Auto Hotspot 🪟🛜
+<h1 align="center">Windows Auto Hotspot</h1>
 
 **Windows Auto Hotspot** makes your PC share internet automatically.
 
