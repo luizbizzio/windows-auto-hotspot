@@ -82,6 +82,7 @@ After installing, open the **Start Menu** and use the shortcuts:
 - This is best for **Ethernet to Wi-Fi sharing**
 - Great for **laptops**, including setups where the laptop stays plugged in
 - You can use **WAH - Status** anytime to check if everything is working
+- **Miracast / wireless display:** On some systems, screen mirroring may fail while Windows Mobile Hotspot is on. Use **WAH - Disable**, make sure Mobile Hotspot is off, and try connecting again. This depends on Windows and your Wi-Fi adapter.
 
 ## Uninstall ❌
 
